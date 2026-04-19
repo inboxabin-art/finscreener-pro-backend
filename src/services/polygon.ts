@@ -3,10 +3,10 @@
  * Real-time stock data with 1-minute bars
  */
 
-import { Polygon } from '@polygon.io/client-js';
+import { restClient } from '@polygon.io/client-js';
 import { config } from '../config';
 
-let client: Polygon | null = null;
+let client: ReturnType<typeof restClient> | null = null;
 
 // Track subscribed symbols
 const subscribedSymbols = new Set<string>();
@@ -18,59 +18,9 @@ export async function initPolygon(): Promise<void> {
     throw new Error('Polygon API key not configured');
   }
 
-  client = new Polygon(config.polygonApiKey, 'v2');
+  client = restClient(config.polygonApiKey);
 
-  console.log('📊 Polygon.io client initialized');
-}
-
-/**
- * Subscribe to real-time quotes for a stock
- */
-export async function subscribeToStock(symbol: string): Promise<void> {
-  if (!client) {
-    throw new Error('Polygon client not initialized');
-  }
-
-  const upperSymbol = symbol.toUpperCase();
-  subscribedSymbols.add(upperSymbol);
-
-  // Subscribe to quotes
-  client.subscribe(`Q.${upperSymbol}`, (data: any) => {
-    lastQuotes.set(upperSymbol, {
-      symbol: upperSymbol,
-      bid: data.bidPrice,
-      ask: data.askPrice,
-      last: data.lastTradePrice,
-      volume: data.volume,
-      timestamp: new Date(data.t).toISOString(),
-    });
-
-    // Broadcast to WebSocket clients
-    broadcastUpdate({
-      type: 'quote',
-      symbol: upperSymbol,
-      data: lastQuotes.get(upperSymbol),
-    });
-  });
-}
-
-/**
- * Subscribe to multiple stocks
- */
-export async function subscribeToStocks(): Promise<void> {
-  if (!client) {
-    console.log('⚠️ Cannot subscribe - Polygon client not initialized');
-    return;
-  }
-
-  // Subscribe to common market symbols
-  const defaultSymbols = ['SPY', 'QQQ', 'IWM'];
-
-  for (const symbol of defaultSymbols) {
-    await subscribeToStock(symbol);
-  }
-
-  console.log(`📊 Subscribed to ${subscribedSymbols.size} symbols`);
+  console.log('Polygon.io client initialized');
 }
 
 /**
@@ -82,13 +32,12 @@ export async function getRealTimeQuote(symbol: string): Promise<any> {
   }
 
   try {
-    const quote = await client.stocks.previousQuote(symbol.toUpperCase());
+    const quote = await client.getLastStocksQuote(symbol.toUpperCase());
     return {
       symbol: symbol.toUpperCase(),
-      open: quote.results?.o || 0,
-      high: quote.results?.h || 0,
-      low: quote.results?.l || 0,
-      close: quote.results?.c || 0,
+      bid: quote.results?.b || 0,
+      ask: quote.results?.a || 0,
+      last: quote.results?.p || 0,
       volume: quote.results?.v || 0,
       timestamp: quote.results?.t ? new Date(quote.results.t).toISOString() : null,
     };
@@ -107,10 +56,10 @@ export async function get1MinBars(symbol: string, from: Date, to: Date): Promise
   }
 
   try {
-    const response = await client.stocks.aggregates(
+    const response = await client.getStocksAggregates(
       symbol.toUpperCase(),
       1,
-      'minute',
+      'minute' as any,
       from.toISOString(),
       to.toISOString()
     );
@@ -144,7 +93,7 @@ export async function getAggBars(
   }
 
   try {
-    const response = await client.stocks.aggregates(
+    const response = await client.getStocksAggregates(
       symbol.toUpperCase(),
       multiplier,
       timespan,
@@ -179,10 +128,10 @@ export async function getDailyBars(symbol: string, days: number = 30): Promise<a
   const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
 
   try {
-    const response = await client.stocks.aggregates(
+    const response = await client.getStocksAggregates(
       symbol.toUpperCase(),
       1,
-      'day',
+      'day' as any,
       from.toISOString(),
       to.toISOString()
     );

@@ -4,7 +4,7 @@
  */
 
 import TelegramBot from 'node-telegram-bot-api';
-import { config } from '../config';
+import { config } from '../config.js';
 
 let bot: TelegramBot | null = null;
 

@@ -3,7 +3,7 @@
  * Exit signal detection and trailing stop calculations
  */
 
-import { config } from '../config';
+import { config } from '../config.js';
 
 // UT Bot key values
 export const UT_BOT_CONFIG = {

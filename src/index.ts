@@ -7,11 +7,11 @@
 
 import express from 'express';
 import cors from 'cors';
-import { config } from './config';
-import { initSupabase, getStocks, getAlerts, createAlert, updateAlert, getNews } from './services/supabase';
-import { initPolygon, subscribeToStocks, getRealTimeQuote, get1MinBars, getAggBars } from './services/polygon';
-import { initTelegram, sendAlert, sendDailySummary, sendSystemStatus } from './services/telegram';
-import { startAlertMonitor, checkAlerts } from './services/alert-monitor';
+import { config } from './config.js';
+import { initSupabase, getStocks, getAlerts, createAlert, updateAlert, getNews } from './services/supabase.js';
+import { initPolygon, subscribeToStocks, getRealTimeQuote, get1MinBars, getAggBars } from './services/polygon.js';
+import { initTelegram, sendAlert, sendDailySummary, sendSystemStatus } from './services/telegram.js';
+import { startAlertMonitor, checkAlerts } from './services/alert-monitor.js';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 
@@ -143,26 +143,26 @@ app.get('/api/news/:stockId', async (req, res) => {
 
 // Start server
 async function start() {
-  console.log('🚀 Starting FinScreener Pro Backend...');
+  console.log('Starting FinScreener Pro Backend...');
 
   // Initialize services
   await initSupabase();
 
   if (config.polygonApiKey) {
     await initPolygon();
-    console.log('✅ Polygon.io connected');
+    console.log('Polygon.io connected');
   } else {
-    console.log('⚠️ Polygon.io not configured - set POLYGON_API_KEY');
+    console.log('Polygon.io not configured - set POLYGON_API_KEY');
   }
 
   if (config.telegramBotToken && config.telegramChatId) {
     await initTelegram();
-    console.log('✅ Telegram connected');
+    console.log('Telegram connected');
 
     // Send startup notification
     await sendSystemStatus('started', 'FinScreener Pro Backend is online');
   } else {
-    console.log('⚠️ Telegram not configured - set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID');
+    console.log('Telegram not configured - set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID');
   }
 
   // Start WebSocket server for real-time updates
@@ -172,7 +172,7 @@ async function start() {
   const clients = new Set<any>();
 
   wss.on('connection', (ws) => {
-    console.log('🔌 WebSocket client connected');
+    console.log('WebSocket client connected');
     clients.add(ws);
 
     ws.on('close', () => {
@@ -196,22 +196,22 @@ async function start() {
   // Subscribe to stocks for real-time data
   if (config.polygonApiKey) {
     subscribeToStocks();
-    console.log('📊 Subscribed to real-time stock data');
+    console.log('Subscribed to real-time stock data');
   }
 
   // Start alert monitoring
   startAlertMonitor();
-  console.log('🔔 Alert monitoring active');
+  console.log('Alert monitoring active');
 
   server.listen(PORT, () => {
-    console.log(`\n✅ Server running on port ${PORT}`);
+    console.log(`\nServer running on port ${PORT}`);
     console.log(`   Health: http://localhost:${PORT}/health`);
     console.log(`   WebSocket: ws://localhost:${PORT}/ws`);
-    console.log(`\n📋 Environment:`);
+    console.log(`\nEnvironment:`);
     console.log(`   Railway: ${config.isRailway ? 'Yes' : 'No'}`);
     console.log(`   Polygon.io: ${config.polygonApiKey ? 'Configured' : 'Not configured'}`);
     console.log(`   Supabase: ${config.supabaseUrl ? 'Configured' : 'Not configured'}`);
-    console.log(`   Telegram: ${config.telegramBotToken ? 'Configured' : 'Not configured'}\n`);
+    console.log(`   Telegram: ${config.telegramBotToken ? 'Configured' : 'Not configured'}`);
   });
 }
 
@@ -219,7 +219,7 @@ start().catch(console.error);
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
-  console.log('🛑 Shutting down...');
+  console.log('Shutting down...');
   if (config.telegramBotToken) {
     await sendSystemStatus('stopped', 'FinScreener Pro Backend is shutting down');
   }

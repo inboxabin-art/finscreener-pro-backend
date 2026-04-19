@@ -3,11 +3,11 @@
  * Monitors real-time prices and triggers alerts
  */
 
-import { config } from '../config';
-import { getActiveAlerts, triggerAlert, closeAlert, updateAlert } from './supabase';
-import { getCachedQuote, get1MinBars, getRealTimeQuote } from './polygon';
-import { sendAlert, sendTradeUpdate } from './telegram';
-import { checkExitSignal, calculateUTBotStop } from './alert-logic';
+import { config } from '../config.js';
+import { getActiveAlerts, triggerAlert, closeAlert, updateAlert } from './supabase.js';
+import { getCachedQuote, get1MinBars, getRealTimeQuote } from './polygon.js';
+import { sendAlert, sendTradeUpdate } from './telegram.js';
+import { checkExitSignal, calculateUTBotStop } from './alert-logic.js';
 
 let monitorInterval: NodeJS.Timeout | null = null;
 

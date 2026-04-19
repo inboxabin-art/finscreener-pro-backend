@@ -4,7 +4,7 @@
  */
 
 import { restClient, GetStocksAggregatesTimespanEnum } from '@polygon.io/client-js';
-import { config } from '../config';
+import { config } from '../config.js';
 
 let client: ReturnType<typeof restClient> | null = null;
 

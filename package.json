@@ -2,6 +2,7 @@
   "name": "finscreener-pro-backend",
   "version": "1.0.0",
   "description": "FinScreener Pro Backend - Real-time stock data, alerts, and Telegram notifications",
+  "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",

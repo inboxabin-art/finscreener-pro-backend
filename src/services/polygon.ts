@@ -3,7 +3,7 @@
  * Real-time stock data with 1-minute bars
  */
 
-import { Polygon } from 'polygon-io-client';
+import { Polygon } from '@polygon.io/client-js';
 import { config } from '../config';
 
 let client: Polygon | null = null;

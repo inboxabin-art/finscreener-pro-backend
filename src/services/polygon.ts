@@ -3,7 +3,7 @@
  * Real-time stock data with 1-minute bars
  */
 
-import { restClient } from '@polygon.io/client-js';
+import { restClient, GetStocksAggregatesTimespanEnum } from '@polygon.io/client-js';
 import { config } from '../config';
 
 let client: ReturnType<typeof restClient> | null = null;
@@ -24,6 +24,58 @@ export async function initPolygon(): Promise<void> {
 }
 
 /**
+ * Subscribe to real-time quotes for a stock
+ */
+export async function subscribeToStock(symbol: string): Promise<void> {
+  if (!client) {
+    throw new Error('Polygon client not initialized');
+  }
+
+  const upperSymbol = symbol.toUpperCase();
+  subscribedSymbols.add(upperSymbol);
+
+  try {
+    const quote = await client.getLastStocksQuote(upperSymbol);
+    lastQuotes.set(upperSymbol, {
+      symbol: upperSymbol,
+      bid: (quote.results as any)?.b || (quote.results as any)?.BP || 0,
+      ask: (quote.results as any)?.a || (quote.results as any)?.AP || 0,
+      last: (quote.results as any)?.p || (quote.results as any)?.P || 0,
+      volume: (quote.results as any)?.v || (quote.results as any)?.V || 0,
+      timestamp: quote.results?.t ? new Date(quote.results.t).toISOString() : null,
+    });
+
+    // Broadcast to WebSocket clients
+    broadcastUpdate({
+      type: 'quote',
+      symbol: upperSymbol,
+      data: lastQuotes.get(upperSymbol),
+    });
+  } catch (error) {
+    console.error(`Error subscribing to ${symbol}:`, error);
+  }
+}
+
+/**
+ * Subscribe to multiple stocks
+ */
+export async function subscribeToStocks(): Promise<void> {
+  if (!client) {
+    console.log('Cannot subscribe - Polygon client not initialized');
+    return;
+  }
+
+  // Subscribe to common market symbols
+  const defaultSymbols = ['SPY', 'QQQ', 'IWM'];
+
+  for (const symbol of defaultSymbols) {
+    await subscribeToStock(symbol);
+  }
+
+  console.log(`Subscribed to ${subscribedSymbols.size} symbols`);
+}
+
+/**
  * Get real-time quote for a symbol
  */
 export async function getRealTimeQuote(symbol: string): Promise<any> {
@@ -35,10 +87,10 @@ export async function getRealTimeQuote(symbol: string): Promise<any> {
     const quote = await client.getLastStocksQuote(symbol.toUpperCase());
     return {
       symbol: symbol.toUpperCase(),
-      bid: quote.results?.b || 0,
-      ask: quote.results?.a || 0,
-      last: quote.results?.p || 0,
-      volume: quote.results?.v || 0,
+      bid: (quote.results as any)?.b || (quote.results as any)?.BP || 0,
+      ask: (quote.results as any)?.a || (quote.results as any)?.AP || 0,
+      last: (quote.results as any)?.p || (quote.results as any)?.P || 0,
+      volume: (quote.results as any)?.v || (quote.results as any)?.V || 0,
       timestamp: quote.results?.t ? new Date(quote.results.t).toISOString() : null,
     };
   } catch (error) {
@@ -59,7 +111,7 @@ export async function get1MinBars(symbol: string, from: Date, to: Date): Promise
     const response = await client.getStocksAggregates(
       symbol.toUpperCase(),
       1,
-      'minute' as any,
+      GetStocksAggregatesTimespanEnum.Minute,
       from.toISOString(),
       to.toISOString()
     );
@@ -92,11 +144,17 @@ export async function getAggBars(
     throw new Error('Polygon client not initialized');
   }
 
+  const timespanEnum = timespan === 'minute' ? GetStocksAggregatesTimespanEnum.Minute :
+                        timespan === 'hour' ? GetStocksAggregatesTimespanEnum.Hour :
+                        timespan === 'day' ? GetStocksAggregatesTimespanEnum.Day :
+                        timespan === 'week' ? GetStocksAggregatesTimespanEnum.Week :
+                        GetStocksAggregatesTimespanEnum.Month;
+
   try {
     const response = await client.getStocksAggregates(
       symbol.toUpperCase(),
       multiplier,
-      timespan,
+      timespanEnum,
       from,
       to
     );
@@ -131,7 +189,7 @@ export async function getDailyBars(symbol: string, days: number = 30): Promise<a
     const response = await client.getStocksAggregates(
       symbol.toUpperCase(),
       1,
-      'day' as any,
+      GetStocksAggregatesTimespanEnum.Day,
       from.toISOString(),
       to.toISOString()
     );

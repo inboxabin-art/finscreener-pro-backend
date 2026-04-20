@@ -15,5 +15,8 @@ RUN npm run build
 # Expose port
 EXPOSE 3001
 
-# Start
-CMD ["node", "dist/index.js"]
+# Set PORT env
+ENV PORT=3001
+
+# Start with test server first
+CMD ["node", "dist/test-server.js"]

@@ -1,0 +1,14 @@
+[nixpacks]
+  PLAN = "nodejs"
+
+[nodejs]
+  version = "20"
+
+[start]
+  run = "node dist/index.js"
+
+[phases.setup]
+  - nixpacks::build::Gradle
+
+[nixpacks::build::NodeJs]
+  npm_install = ""

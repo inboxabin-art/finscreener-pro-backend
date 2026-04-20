@@ -18,5 +18,5 @@ EXPOSE 3001
 # Set PORT env
 ENV PORT=3001
 
-# Start with test server first
-CMD ["node", "dist/test-server.js"]
+# Start the main server
+CMD ["node", "dist/index.js"]

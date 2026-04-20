@@ -1,8 +1,0 @@
-[nixpacks]
-PLAN = "nodejs"
-
-[nodejs]
-version = "20"
-
-[start]
-run = "node index.js"

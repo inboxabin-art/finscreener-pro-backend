@@ -1,5 +1,0 @@
-[nixpacks]
-PLAN = "nodejs"
-
-[nodejs]
-version = "20"

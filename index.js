@@ -9,6 +9,7 @@ const axios = require('axios');
 const FormData = require('form-data');
 const { createClient } = require('@supabase/supabase-js');
 const cheerio = require('cheerio');
+const cron = require('node-cron');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -1499,6 +1500,89 @@ app.use((err, req, res, next) => {
     message: err.message
   });
 });
+
+// ==================== CRON SCHEDULER ====================
+
+// Run daily screening at market open (9:30 AM EST) - every weekday
+cron.schedule('30 9 * * 1-5', async () => {
+  console.log('🔔 [CRON] Running daily stock screening...');
+  try {
+    // Screen stocks from Finviz
+    const response = await axios.post('http://localhost:' + PORT + '/api/screen-stocks', {}, { timeout: 120000 });
+    console.log('✅ [CRON] Screening completed:', response.data);
+
+    // Generate alerts
+    await axios.post('http://localhost:' + PORT + '/api/generate-alerts', {}, { timeout: 120000 });
+    console.log('✅ [CRON] Alerts generated');
+
+    // Get S&P500 prediction
+    await axios.get('http://localhost:' + PORT + '/api/sp500/predict', { timeout: 30000 });
+    console.log('✅ [CRON] S&P500 prediction updated');
+
+    // Send Telegram summary
+    await sendDailySummary();
+    console.log('✅ [CRON] Daily summary sent');
+  } catch (error) {
+    console.error('❌ [CRON] Daily screening failed:', error.message);
+  }
+}, {
+  timezone: 'America/New_York'
+});
+
+// Update prices every hour during market hours (9:30 AM - 4:00 PM EST) - every weekday
+cron.schedule('0 10-16 * * 1-5', async () => {
+  console.log('🔔 [CRON] Updating stock prices...');
+  try {
+    const { data: stocks } = await supabase
+      .from('stocks')
+      .select('symbol')
+      .eq('is_active', true)
+      .limit(50);
+
+    for (const stock of stocks || []) {
+      try {
+        await axios.post('http://localhost:' + PORT + '/api/prices/' + stock.symbol, { days: 30 }, { timeout: 10000 });
+      } catch (e) {
+        console.log('Price update failed for', stock.symbol);
+      }
+    }
+    console.log('✅ [CRON] Prices updated for', stocks?.length || 0, 'stocks');
+  } catch (error) {
+    console.error('❌ [CRON] Price update failed:', error.message);
+  }
+}, {
+  timezone: 'America/New_York'
+});
+
+// Update S&P500 prediction every 4 hours
+cron.schedule('0 */4 * * *', async () => {
+  console.log('🔔 [CRON] Updating S&P500 prediction...');
+  try {
+    await axios.get('http://localhost:' + PORT + '/api/sp500/predict', { timeout: 30000 });
+    console.log('✅ [CRON] S&P500 prediction updated');
+  } catch (error) {
+    console.error('❌ [CRON] S&P500 prediction failed:', error.message);
+  }
+});
+
+// Refresh alerts every 30 minutes during market hours
+cron.schedule('*/30 9-16 * * 1-5', async () => {
+  console.log('🔔 [CRON] Regenerating alerts...');
+  try {
+    await axios.post('http://localhost:' + PORT + '/api/generate-alerts', {}, { timeout: 120000 });
+    console.log('✅ [CRON] Alerts regenerated');
+  } catch (error) {
+    console.error('❌ [CRON] Alert generation failed:', error.message);
+  }
+}, {
+  timezone: 'America/New_York'
+});
+
+console.log('⏰ Cron scheduler initialized');
+console.log('   - Daily screening: 9:30 AM EST (weekdays)');
+console.log('   - Price updates: Every hour 10AM-4PM EST (weekdays)');
+console.log('   - S&P500 prediction: Every 4 hours');
+console.log('   - Alert refresh: Every 30 mins during market hours');
 
 // ==================== START SERVER ====================
 

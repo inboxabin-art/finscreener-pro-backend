@@ -1501,6 +1501,275 @@ app.use((err, req, res, next) => {
   });
 });
 
+// ==================== MANUAL TRIGGER ENDPOINTS ====================
+
+// Manual trigger: Screen stocks from Finviz
+app.post('/api/trigger/screen-stocks', async (req, res) => {
+  console.log('🔔 [MANUAL] Triggering stock screening...');
+  try {
+    // Reuse the screen-stocks logic
+    const finvizFilters = req.body.filters || {
+      dayVolumeOver: 500000,
+      priceAbove: 2,
+      priceBelow: 100,
+      relativeVolumeAbove: 1.2
+    };
+
+    const finvizFiltersList = [];
+    if (finvizFilters.dayVolumeOver) finvizFiltersList.push(`average_volume[${finvizFilters.dayVolumeOver},]`);
+    if (finvizFilters.priceAbove) finvizFiltersList.push(`price[${finvizFilters.priceAbove},]`);
+    if (finvizFilters.priceBelow) finvizFiltersList.push(`price[,${finvizFilters.priceBelow}]`);
+    if (finvizFilters.relativeVolumeAbove) finvizFiltersList.push(`relative_volume[${finvizFilters.relativeVolumeAbove},]`);
+    finvizFiltersList.push('market_cap[small,mid,large]');
+    finvizFiltersList.push('exchange[nasdaq,nye]');
+    finvizFiltersList.push('sector[Technology,Healthcare,Consumer Cyclical,Industrials,Communication Services]');
+
+    const finvizUrl = `https://finviz.com/screener.ashx?v=152&f=${finvizFiltersList.join(',')}&o=ticker&r=1`;
+
+    // Try to get data from Finviz
+    let stocks = [];
+    if (process.env.FINVIZ_EMAIL && process.env.FINVIZ_COOKIE) {
+      try {
+        const response = await axios.get(finvizUrl, {
+          headers: {
+            'Cookie': process.env.FINVIZ_COOKIE,
+            'User-Agent': 'Mozilla/5.0 (compatible; FinScreener/1.0)'
+          },
+          timeout: 30000
+        });
+        const $ = cheerio.load(response.data);
+        const rows = $('table.screener_table tbody tr');
+        rows.each((i, row) => {
+          const cols = $(row).find('td');
+          if (cols.length >= 10) {
+            const symbol = $(cols[1]).text().trim();
+            if (symbol && /^[A-Z.]+$/.test(symbol)) {
+              stocks.push({
+                symbol,
+                company: $(cols[2]).text().trim(),
+                sector: $(cols[3]).text().trim(),
+                industry: $(cols[4]).text().trim(),
+                country: $(cols[5]).text().trim(),
+                price: parseFloat($(cols[6]).text().replace('$', '')) || 0,
+                change: $(cols[7]).text().trim(),
+                volume: parseInt($(cols[8]).text().replace(/,/g, '')) || 0,
+                marketCap: $(cols[9]).text().trim(),
+                pe: $(cols[10]) ? parseFloat($(cols[10]).text()) || null : null
+              });
+            }
+          }
+        });
+      } catch (e) {
+        console.log('Finviz scrape failed:', e.message);
+      }
+    }
+
+    // Save to database
+    let saved = 0;
+    for (const stock of stocks) {
+      const { error } = await supabase
+        .from('stocks')
+        .upsert({
+          symbol: stock.symbol,
+          company_name: stock.company,
+          sector: stock.sector,
+          industry: stock.industry,
+          country: stock.country,
+          market_cap: stock.marketCap,
+          pe_ratio: stock.pe,
+          is_active: true,
+          screened_date: new Date().toISOString().split('T')[0]
+        }, { onConflict: 'symbol' });
+
+      if (!error) saved++;
+    }
+
+    console.log('✅ [MANUAL] Screening completed:', { found: stocks.length, saved });
+    res.json({ success: true, found: stocks.length, saved, timestamp: new Date().toISOString() });
+  } catch (error) {
+    console.error('❌ [MANUAL] Screening failed:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Manual trigger: Fetch prices for all active stocks
+app.post('/api/trigger/fetch-prices', async (req, res) => {
+  console.log('🔔 [MANUAL] Triggering price fetch for all stocks...');
+  try {
+    const { data: stocks } = await supabase
+      .from('stocks')
+      .select('symbol')
+      .eq('is_active', true)
+      .limit(100);
+
+    const results = { total: stocks?.length || 0, success: 0, failed: 0, updated: [] };
+
+    for (const stock of stocks || []) {
+      try {
+        const response = await axios.post(
+          `http://localhost:${PORT}/api/prices/${stock.symbol}`,
+          { days: 30 },
+          { timeout: 15000 }
+        );
+        if (response.data.success) {
+          results.success++;
+          results.updated.push(stock.symbol);
+        }
+      } catch (e) {
+        results.failed++;
+      }
+    }
+
+    console.log('✅ [MANUAL] Price fetch completed:', results);
+    res.json({ success: true, ...results, timestamp: new Date().toISOString() });
+  } catch (error) {
+    console.error('❌ [MANUAL] Price fetch failed:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Manual trigger: Generate alerts for all stocks
+app.post('/api/trigger/generate-alerts', async (req, res) => {
+  console.log('🔔 [MANUAL] Triggering alert generation...');
+  try {
+    const { data: stocks } = await supabase
+      .from('stocks')
+      .select('symbol, id')
+      .eq('is_active', true)
+      .limit(50);
+
+    let alertsGenerated = 0;
+
+    for (const stock of stocks || []) {
+      try {
+        // Get price data
+        const { data: prices } = await supabase
+          .from('prices')
+          .select('*')
+          .eq('symbol', stock.symbol)
+          .order('date', { ascending: false })
+          .limit(30);
+
+        if (!prices || prices.length < 5) continue;
+
+        // Calculate alerts (simplified)
+        const currentPrice = prices[0]?.close || 0;
+        const high30d = Math.max(...prices.map(p => p.high));
+        const low30d = Math.min(...prices.map(p => p.low));
+        const avgVolume = prices.reduce((sum, p) => sum + p.volume, 0) / prices.length;
+        const currentVolume = prices[0]?.volume || 0;
+
+        // VWAP Alert
+        const vwap = prices.reduce((sum, p) => sum + (p.high + p.low + p.close) / 3 * p.volume, 0) /
+                     prices.reduce((sum, p) => sum + p.volume, 0);
+        if (Math.abs(currentPrice - vwap) / vwap < 0.02 && currentPrice > vwap) {
+          await supabase.from('alerts').insert({
+            stock_id: stock.id,
+            symbol: stock.symbol,
+            strategy: 'VWAP Breakout',
+            entry_price: currentPrice,
+            stop_loss: currentPrice * 0.97,
+            target_1: currentPrice * 1.05,
+            target_2: currentPrice * 1.10,
+            status: 'pending',
+            notes: 'VWAP breakout detected'
+          });
+          alertsGenerated++;
+        }
+
+        // Double Bottom Alert
+        if (prices.length >= 10) {
+          const recentLows = prices.slice(0, 10).map(p => p.low);
+          const minLow = Math.min(...recentLows);
+          const minCount = recentLows.filter(l => l <= minLow * 1.02).length;
+          if (minCount >= 2 && currentPrice > minLow * 1.03) {
+            await supabase.from('alerts').insert({
+              stock_id: stock.id,
+              symbol: stock.symbol,
+              strategy: 'Double Bottom',
+              entry_price: currentPrice,
+              stop_loss: minLow * 0.97,
+              target_1: currentPrice + (currentPrice - minLow) * 1.5,
+              target_2: currentPrice + (currentPrice - minLow) * 2,
+              status: 'pending',
+              notes: 'Double bottom pattern detected'
+            });
+            alertsGenerated++;
+          }
+        }
+
+        // Breakout Alert
+        if (currentPrice > high30d * 0.98 && prices[0]?.volume > avgVolume * 1.5) {
+          await supabase.from('alerts').insert({
+            stock_id: stock.id,
+            symbol: stock.symbol,
+            strategy: 'Breakout',
+            entry_price: currentPrice,
+            stop_loss: high30d * 0.97,
+            target_1: high30d * 1.05,
+            target_2: high30d * 1.10,
+            status: 'pending',
+            notes: '30-day breakout with volume confirmation'
+          });
+          alertsGenerated++;
+        }
+      } catch (e) {
+        console.log('Alert generation failed for', stock.symbol);
+      }
+    }
+
+    console.log('✅ [MANUAL] Alerts generated:', alertsGenerated);
+    res.json({ success: true, alertsGenerated, stocksProcessed: stocks?.length || 0, timestamp: new Date().toISOString() });
+  } catch (error) {
+    console.error('❌ [MANUAL] Alert generation failed:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Manual trigger: Update S&P500 prediction
+app.post('/api/trigger/sp500-prediction', async (req, res) => {
+  console.log('🔔 [MANUAL] Triggering S&P500 prediction update...');
+  try {
+    const response = await axios.get('http://localhost:' + PORT + '/api/sp500/predict', { timeout: 30000 });
+    console.log('✅ [MANUAL] S&P500 prediction updated');
+    res.json({ success: true, prediction: response.data, timestamp: new Date().toISOString() });
+  } catch (error) {
+    console.error('❌ [MANUAL] S&P500 prediction failed:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Manual trigger: Run all data updates (full refresh)
+app.post('/api/trigger/full-refresh', async (req, res) => {
+  console.log('🔔 [MANUAL] Triggering full data refresh...');
+  try {
+    // Screen stocks
+    const screenResult = await axios.post('http://localhost:' + PORT + '/api/trigger/screen-stocks', {}, { timeout: 120000 });
+
+    // Fetch prices
+    const priceResult = await axios.post('http://localhost:' + PORT + '/api/trigger/fetch-prices', {}, { timeout: 300000 });
+
+    // Generate alerts
+    const alertResult = await axios.post('http://localhost:' + PORT + '/api/trigger/generate-alerts', {}, { timeout: 120000 });
+
+    // Update S&P500 prediction
+    const sp500Result = await axios.post('http://localhost:' + PORT + '/api/trigger/sp500-prediction', {}, { timeout: 30000 });
+
+    console.log('✅ [MANUAL] Full refresh completed');
+    res.json({
+      success: true,
+      screening: screenResult.data,
+      prices: priceResult.data,
+      alerts: alertResult.data,
+      sp500: sp500Result.data,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ [MANUAL] Full refresh failed:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ==================== CRON SCHEDULER ====================
 
 // Run daily screening at market open (9:30 AM EST) - every weekday

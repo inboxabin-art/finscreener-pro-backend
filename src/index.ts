@@ -315,7 +315,16 @@ app.get('/api/stocks/:symbol/daily', async (req, res) => {
 
 // Start server
 async function start() {
+  console.log('==========================================');
   console.log('Starting FinScreener Pro Backend...');
+  console.log(`Node version: ${process.version}`);
+  console.log(`Time: ${new Date().toISOString()}`);
+  console.log('==========================================');
+
+  // Check environment
+  console.log(`NODE_ENV: ${process.env.NODE_ENV || 'undefined'}`);
+  console.log(`PORT env: ${process.env.PORT || 'undefined'}`);
+  console.log(`PORT const: ${PORT}`);
 
   try {
     // Initialize services

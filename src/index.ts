@@ -13,7 +13,7 @@ import { initPolygon, subscribeToStocks, getRealTimeQuote, get1MinBars, getAggBa
 import { initTelegram, sendAlert, sendDailySummary, sendSystemStatus } from './services/telegram.js';
 import { startAlertMonitor, checkAlerts } from './services/alert-monitor.js';
 import { initFinviz, getFinvizService } from './services/finviz.js';
-import { fetchNewsForAllStocks } from './services/news-scraper.js';
+import { fetchNewsForAllStocks, fetchNewsForSymbol, getNewsSummary } from './services/news-scraper.js';
 import { startScheduler, getSchedulerStatus } from './services/scheduler.js';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';

@@ -13,7 +13,7 @@ import { initPolygon, subscribeToStocks, getRealTimeQuote, get1MinBars, getAggBa
 import { initTelegram, sendAlert, sendDailySummary, sendSystemStatus } from './services/telegram.js';
 import { startAlertMonitor, checkAlerts } from './services/alert-monitor.js';
 import { initFinviz, getFinvizService } from './services/finviz.js';
-import { fetchNewsForAllStocks, fetchNewsForSymbol, getNewsSummary } from './services/news-scraper.js';
+import { fetchNewsForAllStocks } from './services/news-scraper.js';
 import { startScheduler, getSchedulerStatus } from './services/scheduler.js';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
@@ -317,50 +317,35 @@ app.get('/api/stocks/:symbol/daily', async (req, res) => {
 async function start() {
   console.log('Starting FinScreener Pro Backend...');
 
-  // Initialize services
-  await initSupabase();
+  try {
+    // Initialize services
+    await initSupabase();
+    console.log('✅ Supabase initialized');
 
-  if (config.polygonApiKey) {
-    await initPolygon();
-    console.log('✅ Polygon.io connected (Paid tier - real-time enabled)');
-  } else {
-    console.log('⚠️ Polygon.io not configured - set POLYGON_API_KEY');
-  }
-
-  if (config.finvizApiKey) {
-    initFinviz();
-    console.log('✅ Finviz Elite API connected');
-  } else {
-    console.log('⚠️ Finviz not configured - set FINVIZ_API_KEY');
-  }
-
-  if (config.telegramBotToken && config.telegramChatId) {
-    await initTelegram();
-    console.log('✅ Telegram connected');
-
-    // Send startup notification
-    await sendSystemStatus('started', 'FinScreener Pro Backend is online');
-  } else {
-    console.log('⚠️ Telegram not configured - set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID');
-  }
-
-  // Auto-fetch on startup (if Finviz configured)
-  if (config.finvizApiKey) {
-    const finviz = getFinvizService();
-    if (finviz) {
-      console.log('📊 Fetching stocks from Finviz on startup...');
-      finviz.fetchAndSaveStocks().then(count => {
-        if (count > 0) {
-          console.log(`✅ Saved ${count} stocks from Finviz`);
-          // Also fetch news
-          fetchNewsForAllStocks().then(newsMap => {
-            console.log(`✅ Fetched news for ${newsMap.size} stocks`);
-          });
-        }
-      }).catch(err => {
-        console.error('Error fetching from Finviz on startup:', err);
-      });
+    if (config.polygonApiKey) {
+      await initPolygon();
+      console.log('✅ Polygon.io connected (Paid tier - real-time enabled)');
+    } else {
+      console.log('⚠️ Polygon.io not configured - set POLYGON_API_KEY');
     }
+
+    if (config.finvizApiKey) {
+      initFinviz();
+      console.log('✅ Finviz Elite API connected');
+    } else {
+      console.log('⚠️ Finviz not configured - set FINVIZ_API_KEY');
+    }
+
+    if (config.telegramBotToken && config.telegramChatId) {
+      await initTelegram();
+      console.log('✅ Telegram connected');
+      await sendSystemStatus('started', 'FinScreener Pro Backend is online');
+    } else {
+      console.log('⚠️ Telegram not configured');
+    }
+  } catch (error) {
+    console.error('Error initializing services:', error);
+    // Continue anyway - server should still start
   }
 
   // Start WebSocket server for real-time updates
@@ -391,13 +376,13 @@ async function start() {
     });
   };
 
-  // Subscribe to stocks for real-time data
+  // Subscribe to stocks for real-time data (non-blocking)
   if (config.polygonApiKey) {
-    subscribeToStocks();
+    subscribeToStocks().catch(err => console.error('Error subscribing:', err));
     console.log('Subscribed to real-time stock data');
   }
 
-  // Start alert monitoring
+  // Start alert monitoring (non-blocking)
   startAlertMonitor();
   console.log('Alert monitoring active');
 
@@ -406,18 +391,15 @@ async function start() {
   console.log('Scheduler running 24/7');
 
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`\nServer running on port ${PORT}`);
+    console.log(`\n✅ Server running on port ${PORT}`);
     console.log(`   Health: http://localhost:${PORT}/health`);
-    console.log(`   WebSocket: ws://localhost:${PORT}/ws`);
-    console.log(`\nEnvironment:`);
-    console.log(`   Railway: ${config.isRailway ? 'Yes' : 'No'}`);
-    console.log(`   Polygon.io: ${config.polygonApiKey ? 'Configured' : 'Not configured'}`);
-    console.log(`   Supabase: ${config.supabaseUrl ? 'Configured' : 'Not configured'}`);
-    console.log(`   Telegram: ${config.telegramBotToken ? 'Configured' : 'Not configured'}`);
   });
 }
 
-start().catch(console.error);
+start().catch(err => {
+  console.error('❌ Fatal error starting server:', err);
+  process.exit(1);
+});
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {

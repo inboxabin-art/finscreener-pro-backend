@@ -405,7 +405,7 @@ async function start() {
   startScheduler();
   console.log('Scheduler running 24/7');
 
-  server.listen(PORT, () => {
+  server.listen(PORT, '0.0.0.0', () => {
     console.log(`\nServer running on port ${PORT}`);
     console.log(`   Health: http://localhost:${PORT}/health`);
     console.log(`   WebSocket: ws://localhost:${PORT}/ws`);

@@ -7,7 +7,6 @@
   "deploy": {
     "numReplicas": 1,
     "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 10,
-    "port": 3001
+    "restartPolicyMaxRetries": 10
   }
 }

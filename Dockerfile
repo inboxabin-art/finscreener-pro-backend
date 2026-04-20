@@ -6,8 +6,8 @@ WORKDIR /app
 # Copy everything first
 COPY . .
 
-# Install dependencies
-RUN npm install
+# Install including devDependencies for build
+RUN npm install --include=dev
 
 # Build TypeScript
 RUN npm run build

@@ -9,7 +9,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 export const config = {
-  // Server
+  // Server - Railway sets PORT env var, use it or fallback
   port: parseInt(process.env.PORT || '3001'),
   isRailway: !!process.env.RAILWAY_ENVIRONMENT,
 

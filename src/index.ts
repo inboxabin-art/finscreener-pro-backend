@@ -393,6 +393,7 @@ async function start() {
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`\n✅ Server running on port ${PORT}`);
     console.log(`   Health: http://localhost:${PORT}/health`);
+    console.log(`   Timestamp: ${new Date().toISOString()}`);
   });
 }
 

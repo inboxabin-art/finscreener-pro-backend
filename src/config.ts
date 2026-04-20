@@ -18,8 +18,16 @@ export const config = {
   supabaseKey: process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || '',
   supabaseServiceKey: process.env.SUPABASE_SERVICE_KEY || '',
 
-  // Polygon.io - Real-time stock data
+  // Polygon.io - Real-time stock data (PAID TIER)
   polygonApiKey: process.env.POLYGON_API_KEY || '',
+
+  // Finviz - Stock screener (Elite API)
+  finvizApiKey: process.env.FINVIZ_API_KEY || '',
+
+  // News APIs (free tiers)
+  finnhubApiKey: process.env.FINNHUB_API_KEY || '',
+  alphaVantageApiKey: process.env.ALPHA_VANTAGE_API_KEY || '',
+  newsApiKey: process.env.NEWS_API_KEY || '',
 
   // Telegram
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
@@ -40,6 +48,12 @@ export const config = {
     timezone: 'America/New_York',
   },
 
+  // Scheduled jobs
+  scheduledJobs: {
+    finvizFetch: process.env.FINVIZ_FETCH_CRON || '30 14 * * 1-5', // 2:30 PM UK (9:30 AM ET) Mon-Fri
+    newsFetch: process.env.NEWS_FETCH_CRON || '0 14 * * 1-5',       // 2:00 PM UK Mon-Fri
+  },
+
   // Logging
   logLevel: process.env.LOG_LEVEL || 'info',
 };
@@ -50,8 +64,12 @@ export function validateConfig(): boolean {
 
   if (!config.supabaseUrl) required.push('SUPABASE_URL');
   if (!config.supabaseKey) required.push('SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY');
+
   if (!config.polygonApiKey) {
     console.warn('⚠️ POLYGON_API_KEY not set - real-time data disabled');
+  }
+  if (!config.finvizApiKey) {
+    console.warn('⚠️ FINVIZ_API_KEY not set - screener fetch disabled');
   }
   if (!config.telegramBotToken || !config.telegramChatId) {
     console.warn('⚠️ Telegram not configured - notifications disabled');

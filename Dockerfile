@@ -1,24 +1,16 @@
-# FinScreener Pro Backend
-# Railway deployment configuration
+# FinScreener Pro Backend - Railway Deployment
+FROM node:20-slim
 
-FROM node:20-alpine
-
-# Install pnpm globally
-RUN npm install -g pnpm
-
-# Set working directory
 WORKDIR /app
 
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
 
-# Install dependencies using pnpm
-RUN pnpm install --frozen-lockfile
+# Install pnpm and dependencies
+RUN npm install -g pnpm && pnpm install --frozen-lockfile
 
-# Copy source code
+# Copy source and build
 COPY . .
-
-# Build TypeScript
 RUN pnpm run build
 
 # Expose port
@@ -28,5 +20,5 @@ EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1
 
-# Start the server
-CMD ["pnpm", "start"]
+# Start
+CMD ["node", "dist/index.js"]

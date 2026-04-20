@@ -14,6 +14,7 @@ import { initTelegram, sendAlert, sendDailySummary, sendSystemStatus } from './s
 import { startAlertMonitor, checkAlerts } from './services/alert-monitor.js';
 import { initFinviz, getFinvizService } from './services/finviz.js';
 import { fetchNewsForAllStocks, fetchNewsForSymbol, getNewsSummary } from './services/news-scraper.js';
+import { startScheduler, getSchedulerStatus } from './services/scheduler.js';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 
@@ -233,6 +234,11 @@ app.get('/api/news/symbol/:symbol', async (req, res) => {
 
 // ===== SCHEDULED JOBS =====
 
+// Get scheduler status
+app.get('/api/scheduler/status', (req, res) => {
+  res.json(getSchedulerStatus());
+});
+
 // Trigger manual fetch (admin endpoint)
 app.post('/api/jobs/fetch-stocks', async (req, res) => {
   try {
@@ -394,6 +400,10 @@ async function start() {
   // Start alert monitoring
   startAlertMonitor();
   console.log('Alert monitoring active');
+
+  // Start scheduler (24/7)
+  startScheduler();
+  console.log('Scheduler running 24/7');
 
   server.listen(PORT, () => {
     console.log(`\nServer running on port ${PORT}`);

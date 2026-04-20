@@ -1,9 +1,10 @@
 {
   "name": "finscreener-pro-backend",
   "version": "1.0.0",
-  "main": "server.js",
+  "description": "FinScreener Pro Backend",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node index.js"
   },
   "dependencies": {
     "express": "^4.18.2"

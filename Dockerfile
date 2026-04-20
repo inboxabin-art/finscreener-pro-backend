@@ -1,28 +1,28 @@
 # FinScreener Pro Backend - Railway Deployment
 FROM node:20-slim
 
+# Create app directory
+RUN mkdir -p /app
 WORKDIR /app
 
-# Copy package files first for better caching
+# Copy package files
 COPY package*.json ./
 
-# Install dependencies including devDependencies for build
+# Install dependencies
 RUN npm ci --include=dev
 
-# Copy source code
+# Copy source and build
 COPY . .
-
-# Build TypeScript
 RUN npm run build
 
-# Remove devDependencies to reduce image size
+# Prune devDependencies
 RUN npm prune --production
 
 # Expose port
 EXPOSE 3001
 
-# Set environment
+# Set env vars
 ENV NODE_ENV=production
 
-# Start with explicit binding
-CMD ["node", "--enable-source-maps", "dist/index.js"]
+# Run directly
+CMD ["node", "dist/index.js"]

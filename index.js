@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 3001;
 
 // ==================== SUPABASE CLIENT ====================
 const supabaseUrl = process.env.SUPABASE_URL || 'https://owxklgfpjctqribmqtdr.supabase.co';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY || 'sb_publishable_xSrKhmigmOUKWA3hCUCPsw_ZYGdCk3M';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im93eGtsZ2ZwamN0cXJpYm1xZGRyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDYzMzgxMTV9.kFgtvO2JQJ5b7R5v7z1C6Q4xKYbBqjN1eF4i1gR3m0s';
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 // ==================== API KEYS ====================

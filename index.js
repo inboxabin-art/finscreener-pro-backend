@@ -22,8 +22,17 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
 // ==================== API KEYS ====================
 const FINVIZ_API_KEY = process.env.FINVIZ_API_KEY || 'aee3eced-f1e8-4f3a-bd20-feabc58c111a';
 const POLYGON_API_KEY = process.env.POLYGON_API_KEY || 'iO7G4s0BzGHxip4_W8Bou00ml0F1SRFP';
+const MASSIVE_API_KEY = process.env.MASSIVE_API_KEY || POLYGON_API_KEY; // Massive uses same key
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyA2amEKGivLhRFm_FxsYfveNNGNoEJ3FN4';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8665955381:AAH692a74tFQ44lQgxyaaHb1A7MeISTmYlI';
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '5286113328';
+
+// Finviz Elite API base URLs
+const FINVIZ_EXPORT_URL = 'https://elite.finviz.com/export.ashx';
+const FINVIZ_NEWS_URL = 'https://elite.finviz.com/news_export.ashx';
+// User's saved screener preset filters
+const FINVIZ_SCREENER_FILTERS = 'cap_smallover,fa_curratio_o1.5,fa_epsyoy1_o20,news_date_prevhours24,sh_relvol_o1.5,ta_sma20_pa';
+const FINVIZ_SCREENER_OPTIONS = 'ft=3&o=-change'; // sort by change desc, type=stocks
 
 // Middleware
 app.use(express.json({ limit: '50mb' }));
@@ -111,242 +120,228 @@ async function saveOrUpdateStock(stock) {
 
 // ==================== FINVIZ API INTEGRATION ====================
 
-// Finviz Elite API - Fetch screener results
+// Parse CSV text (handles quoted fields with commas)
+function parseCSV(text) {
+  const lines = text.trim().split('\n');
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim().toLowerCase().replace(/\s+/g, '_'));
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const vals = [];
+    let cur = '', inQ = false;
+    for (const ch of lines[i]) {
+      if (ch === '"') { inQ = !inQ; }
+      else if (ch === ',' && !inQ) { vals.push(cur.trim()); cur = ''; }
+      else cur += ch;
+    }
+    vals.push(cur.trim());
+    if (vals.length >= headers.length) {
+      const row = {};
+      headers.forEach((h, idx) => { row[h] = vals[idx] || ''; });
+      rows.push(row);
+    }
+  }
+  return rows;
+}
+
+function parseNum(val) {
+  if (!val || val === 'N/A' || val === '-') return null;
+  const s = String(val).replace(/[$,%]/g, '').trim();
+  if (s.endsWith('B')) return parseFloat(s) * 1e9;
+  if (s.endsWith('M')) return parseFloat(s) * 1e6;
+  if (s.endsWith('K')) return parseFloat(s) * 1e3;
+  return parseFloat(s) || null;
+}
+
+// Finviz Elite CSV Export Screener (uses elite.finviz.com/export.ashx)
 app.post('/api/screen-stocks', async (req, res) => {
   try {
-    console.log('Starting Finviz screener fetch...');
+    console.log('Starting Finviz Elite CSV screener...');
 
-    // Use Finviz API
-    const filters = req.body.filters || {
-      dayVolumeOver: 500000,
-      priceAbove: 2,
-      priceBelow: 100,
-      relativeVolumeAbove: 1.5
-    };
+    // Use user's saved preset filters; caller can override filters
+    const filters = req.body.filters || FINVIZ_SCREENER_FILTERS;
+    const extraOpts = req.body.options || FINVIZ_SCREENER_OPTIONS;
 
-    // Build Finviz screener URL
-    const screenerUrl = `https://finviz.com/screener.ashx?v=152&f=sh_rel_o5 above,sh_avgvol_o${filters.dayVolumeOver},sh_price_${filters.priceAbove}_${filters.priceBelow},sh_relvol_o${filters.relativeVolumeAbove}&o=-volume&r=1&token=${FINVIZ_API_KEY}`;
+    const exportUrl = `${FINVIZ_EXPORT_URL}?v=111&f=${filters}&${extraOpts}&auth=${FINVIZ_API_KEY}`;
+    console.log('Finviz export URL:', exportUrl.replace(FINVIZ_API_KEY, '***'));
 
-    console.log('Fetching from:', screenerUrl.substring(0, 100) + '...');
-
-    const response = await axios.get(screenerUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml',
-      },
+    const response = await axios.get(exportUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
       timeout: 30000
     });
 
-    const stocks = parseFinvizHTML(response.data);
-    console.log(`Found ${stocks.length} stocks from Finviz`);
+    const rows = parseCSV(response.data);
+    console.log(`Finviz returned ${rows.length} stocks`);
 
-    // Save to database
+    const stocks = rows.map(r => ({
+      symbol: (r['ticker'] || r['no.'] || '').trim(),
+      companyName: r['company'] || r['company_name'] || r['name'] || '',
+      sector: r['sector'] || '',
+      industry: r['industry'] || '',
+      country: r['country'] || '',
+      price: parseNum(r['price']),
+      change: parseNum(r['change']),
+      changePercent: parseNum(r['change']), // Finviz change col is already %
+      volume: parseNum(r['volume']),
+      avgVolume: parseNum(r['avg_volume'] || r['avg_vol_3m'] || r['average_volume']),
+      marketCap: parseNum(r['market_cap'] || r['mktcap']),
+      peRatio: parseNum(r['p/e'] || r['pe']),
+      eps: parseNum(r['eps_(ttm)'] || r['eps']),
+      weekHigh52: parseNum(r['52w_high'] || r['52_week_high']),
+      weekLow52: parseNum(r['52w_low'] || r['52_week_low']),
+      relativeVolume: parseNum(r['rel_volume'] || r['relative_volume']),
+      currentRatio: parseNum(r['current_ratio'] || r['curr_r']),
+      epsGrowthNextYear: parseNum(r['eps_next_y'] || r['eps_growth_next_year']),
+      source: 'finviz_elite_csv',
+    })).filter(s => s.symbol && s.symbol.length <= 6 && !/^\d/.test(s.symbol));
+
+    // Save to DB
     let savedCount = 0;
     for (const stock of stocks) {
       const id = await saveOrUpdateStock(stock);
       if (id) savedCount++;
     }
 
-    // Fetch news for each stock
-    await fetchNewsForStocks(stocks);
+    // Fetch Finviz news for each screened stock
+    fetchFinvizNewsForStocks(stocks).catch(e => console.error('News fetch error:', e.message));
 
-    res.json({
-      success: true,
-      found: stocks.length,
-      saved: savedCount,
-      timestamp: new Date().toISOString()
-    });
+    res.json({ success: true, found: stocks.length, saved: savedCount, timestamp: new Date().toISOString() });
   } catch (error) {
-    console.error('Screen stocks error:', error);
-    res.status(500).json({
-      error: 'Failed to screen stocks',
-      details: error.message
-    });
+    console.error('Screen stocks error:', error.message);
+    res.status(500).json({ error: 'Failed to screen stocks', details: error.message });
   }
 });
 
-// Parse Finviz HTML response
-function parseFinvizHTML(html) {
-  const $ = cheerio.load(html);
-  const stocks = [];
-
-  $('table.screener_table tbody tr').each((i, row) => {
-    const cells = $(row).find('td');
-    if (cells.length >= 10) {
-      const symbol = $(cells[0]).text().trim();
-      if (symbol && symbol.length <= 5 && !symbol.includes('No.') && !symbol.includes('Ticker')) {
-        const priceText = $(cells[5]).text().replace('$', '').trim();
-        const changeText = $(cells[6]).text().replace('%', '').replace('+', '').trim();
-        const volumeText = $(cells[7]).text().replace(/,/g, '').trim();
-
-        stocks.push({
-          symbol: symbol,
-          companyName: $(cells[1]).text().trim(),
-          sector: $(cells[2]).text().trim(),
-          industry: $(cells[3]).text().trim(),
-          price: parseFloat(priceText) || 0,
-          change: parseFloat(changeText) || 0,
-          volume: parseInt(volumeText) || 0,
-          marketCap: parseMarketCap($(cells[8]).text()),
-          peRatio: parseFloat($(cells[9]).text()) || null,
-          eps: parseFloat($(cells[10]).text()) || null,
-          source: 'finviz_api'
-        });
-      }
-    }
-  });
-
-  return stocks;
-}
-
-function parseMarketCap(text) {
-  if (!text) return 0;
-  const match = text.match(/([\d.]+)([BMTK])/i);
-  if (!match) return 0;
-  const value = parseFloat(match[1]);
-  switch (match[2].toUpperCase()) {
-    case 'B': return value * 1e9;
-    case 'M': return value * 1e6;
-    case 'K': return value * 1e3;
-    default: return value;
-  }
-}
-
 // ==================== NEWS SCRAPING & SCORING ====================
 
-// Fetch news from Polygon.io
-async function fetchNewsForStocks(stocks) {
-  for (const stock of stocks.slice(0, 20)) { // Limit to 20 stocks per run
+// Fetch news from Finviz Elite news export for a list of stocks
+async function fetchFinvizNewsForStocks(stocks) {
+  if (!stocks || !stocks.length) return;
+  const symbols = stocks.slice(0, 30).map(s => s.symbol);
+
+  for (const symbol of symbols) {
     try {
-      const response = await axios.get(
-        `https://api.polygon.io/v2/reference/news?ticker=${stock.symbol}&limit=5&apiKey=${POLYGON_API_KEY}`,
-        { timeout: 10000 }
-      );
+      // Finviz ticker-specific news export: v=3 with t=TICKER
+      const url = `${FINVIZ_NEWS_URL}?v=3&t=${symbol}&auth=${FINVIZ_API_KEY}`;
+      const response = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 15000 });
 
-      if (response.data?.results) {
-        for (const article of response.data.results) {
-          await saveAndScoreNews(stock.symbol, article);
-        }
+      if (!response.data || response.data.length < 10) continue;
+
+      const rows = parseCSV(response.data);
+      for (const row of rows.slice(0, 8)) { // max 8 articles per stock
+        const title = row['title'] || row['headline'] || row['news'] || '';
+        const newsUrl = row['url'] || row['link'] || '';
+        const source = row['source'] || row['publisher'] || 'finviz';
+        const dateStr = row['date'] || row['datetime'] || row['time'] || '';
+
+        if (!title) continue;
+
+        // Get or create stock record
+        const { data: stockRec } = await supabase.from('stocks').select('id').eq('symbol', symbol).single();
+        if (!stockRec) continue;
+
+        // Deduplicate by URL or title+symbol
+        const { data: existing } = await supabase.from('news').select('id')
+          .eq('stock_id', stockRec.id).eq('title', title).maybeSingle();
+        if (existing) continue;
+
+        // Score with Gemini (async, non-blocking)
+        const scoring = await scoreNewsWithGemini(title, symbol);
+
+        await supabase.from('news').insert({
+          stock_id: stockRec.id,
+          title,
+          content: '',
+          source,
+          url: newsUrl,
+          published_at: dateStr ? new Date(dateStr).toISOString() : new Date().toISOString(),
+          sentiment_score: scoring.sentiment,
+          impact_score: scoring.impact,
+          impact_tier: scoring.tier,
+          impact_reason: scoring.reason,
+          scored_at: new Date().toISOString(),
+        });
       }
-    } catch (error) {
-      console.log(`No news from Polygon for ${stock.symbol}`);
+      await new Promise(r => setTimeout(r, 300)); // avoid rate limiting
+    } catch (err) {
+      console.log(`[News] Skipped ${symbol}: ${err.message}`);
     }
   }
 }
 
-// Save news and score it
-async function saveAndScoreNews(symbol, article) {
-  // Get stock ID
-  const { data: stock } = await supabase
-    .from('stocks')
-    .select('id')
-    .eq('symbol', symbol)
-    .single();
+// ==================== GEMINI AI SENTIMENT SCORING ====================
 
-  if (!stock) return;
+// Score news using Gemini Flash for proper NLP sentiment analysis
+async function scoreNewsWithGemini(title, ticker = '') {
+  // Fallback scoring in case Gemini fails
+  const fallback = fallbackKeywordScore(title);
 
-  // Check if news already exists
-  const { data: existing } = await supabase
-    .from('news')
-    .select('id')
-    .eq('url', article.article_url || article.url)
-    .single();
+  if (!GEMINI_API_KEY) return fallback;
 
-  if (existing) return;
+  try {
+    const prompt = `You are a stock trading news sentiment analyzer. Analyze this news headline for ticker ${ticker}.
 
-  // Score the news
-  const scoring = scoreNewsImpact(article.title || '', article.description || '', article.keywords || []);
+Headline: "${title}"
 
-  // Save to database
-  await supabase.from('news').insert({
-    stock_id: stock.id,
-    title: article.title || 'No title',
-    content: article.description || '',
-    source: article.source || 'unknown',
-    url: article.article_url || article.url || '',
-    published_at: article.published_utc || new Date().toISOString(),
-    sentiment_score: scoring.sentiment,
-    impact_score: scoring.impact,
-    impact_tier: scoring.tier,
-    impact_reason: scoring.reason,
-    scored_at: new Date().toISOString(),
-  });
+Respond ONLY with a JSON object (no markdown, no extra text):
+{
+  "sentiment": <float -1.0 to 1.0, negative=bearish, positive=bullish>,
+  "impact": <integer 0-100, trading significance>,
+  "tier": <"tier1"|"tier2"|"low">,
+  "reason": <one sentence explanation max 100 chars>
 }
 
-// News Impact Scoring Engine
-function scoreNewsImpact(title, content, keywords = []) {
-  const text = `${title} ${content}`.toLowerCase();
-  const allKeywords = [...keywords.map(k => k.toLowerCase())];
+Tiers:
+- tier1: Multi-day price mover (M&A, FDA, earnings beat/miss, major contract, analyst upgrade/downgrade)
+- tier2: Same-day intraday mover (product launch, exec change, expansion, partnership)
+- low: General news, promotional, minor update`;
 
-  // High impact keywords - Tier 1 (Multi-day potential)
-  const tier1Keywords = [
-    'acquisition', 'merger', 'buyout', 'takeover', 'deal', 'contract',
-    'fda approval', 'clinical trial', 'phase 3', 'breakthrough',
-    'partnership', 'collaboration', 'ipo', 'public offering',
-    'bankruptcy', 'restructuring', 'lawsuit', 'settlement',
-    'upgrade', 'downgrade', 'analyst', 'target price', 'rating',
-    'earnings beat', 'revenue beat', 'guidance raise', 'guidance cut'
-  ];
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent`,
+      { contents: [{ parts: [{ text: prompt }] }] },
+      {
+        headers: { 'Content-Type': 'application/json', 'X-goog-api-key': GEMINI_API_KEY },
+        timeout: 10000
+      }
+    );
 
-  // Medium impact keywords - Tier 2 (Same-day potential)
-  const tier2Keywords = [
-    'earnings', 'revenue', 'profit', 'loss', 'quarterly', 'annual',
-    'launch', 'product', 'release', 'announcement', 'press release',
-    'executive', 'ceo', 'cfo', 'appointment', 'resignation',
-    'expansion', 'new market', 'store opening', 'expanding',
-    'recall', 'safety', 'investigation', 'probe'
-  ];
+    const raw = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return fallback;
 
-  // Check for high impact
-  let tier1Matches = 0;
-  let tier2Matches = 0;
-  let sentimentScore = 0;
-
-  for (const keyword of tier1Keywords) {
-    if (text.includes(keyword)) {
-      tier1Matches++;
-      sentimentScore += 2;
-    }
+    const parsed = JSON.parse(jsonMatch[0]);
+    return {
+      sentiment: Math.max(-1, Math.min(1, Number(parsed.sentiment) || 0)),
+      impact: Math.max(0, Math.min(100, Number(parsed.impact) || 0)),
+      tier: ['tier1', 'tier2', 'low'].includes(parsed.tier) ? parsed.tier : fallback.tier,
+      reason: String(parsed.reason || fallback.reason).slice(0, 200),
+    };
+  } catch (err) {
+    console.warn('[Gemini] Score failed, using fallback:', err.message);
+    return fallback;
   }
+}
 
-  for (const keyword of tier2Keywords) {
-    if (text.includes(keyword)) {
-      tier2Matches++;
-      sentimentScore += 1;
-    }
-  }
+// Fallback keyword scoring (used when Gemini is unavailable)
+function fallbackKeywordScore(title) {
+  const text = title.toLowerCase();
+  const tier1 = ['acquisition','merger','buyout','takeover','fda approval','clinical trial','phase 3','bankruptcy','restructuring','settlement','earnings beat','revenue beat','guidance raise','guidance cut','upgrade','downgrade','target price'];
+  const tier2 = ['earnings','revenue','profit','loss','launch','partnership','collaboration','executive','ceo','appointment','resignation','expansion','recall','investigation'];
+  const pos = ['surge','jump','rise','gain','soar','rally','growth','beat','strong','bullish','record'];
+  const neg = ['drop','fall','plunge','tumble','loss','miss','weak','bearish','cut','layoff','probe','fraud'];
 
-  // Sentiment analysis
-  const positiveWords = ['surge', 'jump', 'rise', 'gain', 'soar', 'rally', 'growth', 'profit', 'beat', 'strong', 'upgrade', 'bullish'];
-  const negativeWords = ['drop', 'fall', 'plunge', 'tumble', 'loss', 'miss', 'weak', 'downgrade', 'bearish', 'cut', 'layoff', 'investigation'];
+  let s = 0, t1 = 0, t2 = 0;
+  tier1.forEach(k => { if (text.includes(k)) { t1++; s += 2; } });
+  tier2.forEach(k => { if (text.includes(k)) { t2++; s += 1; } });
+  pos.forEach(w => { if (text.includes(w)) s += 1; });
+  neg.forEach(w => { if (text.includes(w)) s -= 1; });
 
-  for (const word of positiveWords) {
-    if (text.includes(word)) sentimentScore += 1;
-  }
-  for (const word of negativeWords) {
-    if (text.includes(word)) sentimentScore -= 1;
-  }
-
-  // Determine tier
-  let tier = 'low';
-  let reason = 'General promotional or low-impact news';
-
-  if (tier1Matches >= 2 || (tier1Matches >= 1 && sentimentScore >= 3)) {
-    tier = 'tier1';
-    reason = `High impact: ${tier1Matches} Tier-1 keywords detected. Potential for multi-day price movement.`;
-  } else if (tier1Matches >= 1 || tier2Matches >= 2 || Math.abs(sentimentScore) >= 2) {
-    tier = 'tier2';
-    reason = `Medium impact: ${tier2Matches} Tier-2 keywords. Same-day trading opportunity.`;
-  } else if (sentimentScore !== 0) {
-    tier = 'tier2';
-    reason = 'Sentiment detected but limited duration. Intraday only.';
-  }
-
+  const tier = t1 >= 1 ? 'tier1' : (t2 >= 1 || Math.abs(s) >= 2) ? 'tier2' : 'low';
   return {
-    sentiment: Math.max(-1, Math.min(1, sentimentScore / 5)),
-    impact: Math.min(100, (tier1Matches * 30) + (tier2Matches * 15) + Math.abs(sentimentScore) * 10),
+    sentiment: Math.max(-1, Math.min(1, s / 5)),
+    impact: Math.min(100, t1 * 30 + t2 * 15 + Math.abs(s) * 8),
     tier,
-    reason
+    reason: tier === 'tier1' ? 'High-impact event detected' : tier === 'tier2' ? 'Medium-impact event' : 'Low impact news',
   };
 }
 
@@ -389,7 +384,7 @@ app.post('/api/news/manual', async (req, res) => {
     }
 
     const stockId = await saveOrUpdateStock({ symbol, companyName: symbol });
-    const scoring = scoreNewsImpact(title, content || '', []);
+    const scoring = await scoreNewsWithGemini(title + ' ' + (content || ''), symbol);
 
     const { data, error } = await supabase.from('news').insert({
       stock_id: stockId,
@@ -1379,28 +1374,70 @@ app.put('/api/alerts/:id', async (req, res) => {
 
 // ==================== LIVE PRICE SNAPSHOT ====================
 
-// Fetch live prices for all active stocks using Polygon snapshot
-// Uses v2/snapshot which returns the latest 1-min bar close (free plan supported)
-async function fetchLivePricesFromPolygon(symbols) {
+// Fetch live prices using Massive/Polygon v3/snapshot (batch, real-time 1-min data)
+async function fetchLivePricesFromMassive(symbols) {
   if (!symbols.length) return {};
-  const tickers = symbols.join(',');
   try {
+    // v3/snapshot supports batch tickers with ticker.any_of and returns session_price (live)
+    const batchSize = 50;
+    const results = {};
+
+    for (let i = 0; i < symbols.length; i += batchSize) {
+      const batch = symbols.slice(i, i + batchSize).join(',');
+      const response = await axios.get(
+        `https://api.massive.com/v3/snapshot?ticker.any_of=${batch}&limit=${batchSize}`,
+        {
+          headers: { Authorization: `Bearer ${MASSIVE_API_KEY}` },
+          params: { apiKey: MASSIVE_API_KEY },
+          timeout: 15000
+        }
+      );
+
+      for (const t of (response.data?.results || [])) {
+        // session_price = current live price; last_minute_close as backup
+        const price = t.session?.price || t.last_minute?.close || t.prev_day?.close || 0;
+        const prevClose = t.prev_day?.close || price;
+        const change = t.session?.change || (price - prevClose);
+        const changePercent = t.session?.change_percent || (prevClose > 0 ? (change / prevClose) * 100 : 0);
+        results[t.ticker] = {
+          price,
+          change,
+          changePercent,
+          volume: t.session?.volume || t.prev_day?.volume || 0,
+          vwap: t.session?.vwap || 0,
+          high: t.session?.high || 0,
+          low: t.session?.low || 0,
+        };
+      }
+    }
+    return results;
+  } catch (err) {
+    // Fallback to v2/snapshot (Polygon-compatible)
+    console.warn('[Massive v3] Falling back to v2/snapshot:', err.message);
+    return fetchLivePricesV2Fallback(symbols);
+  }
+}
+
+// Fallback: Polygon-compatible v2/snapshot
+async function fetchLivePricesV2Fallback(symbols) {
+  if (!symbols.length) return {};
+  try {
+    const tickers = symbols.join(',');
     const response = await axios.get(
       `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${tickers}&apiKey=${POLYGON_API_KEY}`,
       { timeout: 15000 }
     );
     const results = {};
     for (const t of (response.data?.tickers || [])) {
-      // min.c = latest 1-min bar close (live); prevDay.c = yesterday close (fallback)
       const price = t.min?.c || t.prevDay?.c || 0;
       const prevClose = t.prevDay?.c || price;
       const change = price - prevClose;
       const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
-      results[t.ticker] = { price, change, changePercent, volume: t.day?.v || t.prevDay?.v || 0 };
+      results[t.ticker] = { price, change, changePercent, volume: t.day?.v || t.prevDay?.v || 0, vwap: t.day?.vw || 0, high: t.day?.h || 0, low: t.day?.l || 0 };
     }
     return results;
   } catch (error) {
-    console.error('[Polygon snapshot] Error:', error.message);
+    console.error('[v2/snapshot fallback] Error:', error.message);
     return {};
   }
 }
@@ -1417,7 +1454,7 @@ app.get('/api/stocks/live-prices', async (req, res) => {
     if (!stocks?.length) return res.json({ prices: {} });
 
     const symbols = stocks.map(s => s.symbol);
-    const prices = await fetchLivePricesFromPolygon(symbols);
+    const prices = await fetchLivePricesFromMassive(symbols);
     res.json({ prices, timestamp: new Date().toISOString() });
   } catch (error) {
     console.error('Error fetching live prices:', error);
@@ -1437,7 +1474,7 @@ app.post('/api/stocks/refresh-prices', async (req, res) => {
     if (!stocks?.length) return res.json({ updated: 0 });
 
     const symbols = stocks.map(s => s.symbol);
-    const priceMap = await fetchLivePricesFromPolygon(symbols);
+    const priceMap = await fetchLivePricesFromMassive(symbols);
 
     let updated = 0;
     for (const stock of stocks) {

@@ -1377,6 +1377,90 @@ app.put('/api/alerts/:id', async (req, res) => {
   }
 });
 
+// ==================== LIVE PRICE SNAPSHOT ====================
+
+// Fetch live prices for all active stocks using Polygon snapshot
+// Uses v2/snapshot which returns the latest 1-min bar close (free plan supported)
+async function fetchLivePricesFromPolygon(symbols) {
+  if (!symbols.length) return {};
+  const tickers = symbols.join(',');
+  try {
+    const response = await axios.get(
+      `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${tickers}&apiKey=${POLYGON_API_KEY}`,
+      { timeout: 15000 }
+    );
+    const results = {};
+    for (const t of (response.data?.tickers || [])) {
+      // min.c = latest 1-min bar close (live); prevDay.c = yesterday close (fallback)
+      const price = t.min?.c || t.prevDay?.c || 0;
+      const prevClose = t.prevDay?.c || price;
+      const change = price - prevClose;
+      const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
+      results[t.ticker] = { price, change, changePercent, volume: t.day?.v || t.prevDay?.v || 0 };
+    }
+    return results;
+  } catch (error) {
+    console.error('[Polygon snapshot] Error:', error.message);
+    return {};
+  }
+}
+
+// GET /api/stocks/live-prices — returns current prices for all active stocks
+app.get('/api/stocks/live-prices', async (req, res) => {
+  try {
+    const { data: stocks } = await supabase
+      .from('stocks')
+      .select('id, symbol')
+      .eq('is_active', true)
+      .limit(100);
+
+    if (!stocks?.length) return res.json({ prices: {} });
+
+    const symbols = stocks.map(s => s.symbol);
+    const prices = await fetchLivePricesFromPolygon(symbols);
+    res.json({ prices, timestamp: new Date().toISOString() });
+  } catch (error) {
+    console.error('Error fetching live prices:', error);
+    res.status(500).json({ error: 'Failed to fetch live prices' });
+  }
+});
+
+// POST /api/stocks/refresh-prices — updates stocks table with live Polygon snapshot prices
+app.post('/api/stocks/refresh-prices', async (req, res) => {
+  try {
+    const { data: stocks } = await supabase
+      .from('stocks')
+      .select('id, symbol')
+      .eq('is_active', true)
+      .limit(100);
+
+    if (!stocks?.length) return res.json({ updated: 0 });
+
+    const symbols = stocks.map(s => s.symbol);
+    const priceMap = await fetchLivePricesFromPolygon(symbols);
+
+    let updated = 0;
+    for (const stock of stocks) {
+      const p = priceMap[stock.symbol];
+      if (!p || !p.price) continue;
+      await supabase.from('stocks').update({
+        price: p.price,
+        change: p.change,
+        change_percent: p.changePercent,
+        volume: p.volume || undefined,
+        updated_at: new Date().toISOString(),
+      }).eq('id', stock.id);
+      updated++;
+    }
+
+    console.log(`✅ [Snapshot] Refreshed prices for ${updated} stocks`);
+    res.json({ success: true, updated, timestamp: new Date().toISOString() });
+  } catch (error) {
+    console.error('Error refreshing prices:', error);
+    res.status(500).json({ error: 'Failed to refresh prices' });
+  }
+});
+
 // ==================== TELEGRAM NOTIFICATIONS ====================
 
 // Send Telegram notification
@@ -1798,26 +1882,14 @@ cron.schedule('30 9 * * 1-5', async () => {
   timezone: 'America/New_York'
 });
 
-// Update prices every hour during market hours (9:30 AM - 4:00 PM EST) - every weekday
-cron.schedule('0 10-16 * * 1-5', async () => {
-  console.log('🔔 [CRON] Updating stock prices...');
+// Update prices every 15 minutes during market hours (9:30 AM - 4:15 PM EST) - every weekday
+// Uses Polygon snapshot for live current prices instead of daily historical bars
+cron.schedule('*/15 9-16 * * 1-5', async () => {
+  console.log('🔔 [CRON] Refreshing live stock prices via Polygon snapshot...');
   try {
-    const { data: stocks } = await supabase
-      .from('stocks')
-      .select('symbol')
-      .eq('is_active', true)
-      .limit(50);
-
-    for (const stock of stocks || []) {
-      try {
-        await axios.post('http://localhost:' + PORT + '/api/prices/' + stock.symbol, { days: 30 }, { timeout: 10000 });
-      } catch (e) {
-        console.log('Price update failed for', stock.symbol);
-      }
-    }
-    console.log('✅ [CRON] Prices updated for', stocks?.length || 0, 'stocks');
+    await axios.post('http://localhost:' + PORT + '/api/stocks/refresh-prices', {}, { timeout: 30000 });
   } catch (error) {
-    console.error('❌ [CRON] Price update failed:', error.message);
+    console.error('❌ [CRON] Live price refresh failed:', error.message);
   }
 }, {
   timezone: 'America/New_York'
